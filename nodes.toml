@@ -1,0 +1,8 @@
+
+[test-dir-1]
+type = 'dir'
+name = 'asdfasdf'
+id = 10
+
+[test-dir-1.]
+

@@ -1,0 +1,9 @@
+nodes:
+  - id: 10
+    name: test
+    type: folder
+    children:
+      - id: 20
+        name: testVal
+        initValue: 10
+

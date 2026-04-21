@@ -1,17 +1,18 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
-use axum::{
-    Json, Router, extract::State, routing::get
-};
-use opcua_server::address_space::NodeType;
-use opcua_types::{DataEncoding, NodeId, NumericRange, TimestampsToReturn};
-use serde::Serialize;
 use crate::opcua::{Config, NodeConfig, NodeManager, UaValue};
+use axum::{Json, Router, extract::State, routing::{get, post}};
+use opcua_server::{SubscriptionCache, address_space::NodeType};
+use opcua_types::{DataEncoding, DataValue, NodeId, NumericRange, TimestampsToReturn};
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use anyhow::Result;
 
 #[derive(Clone)]
-struct SharedState {
+pub struct SharedState {
     config: Config,
-    node_manager: NodeManager
+    node_manager: NodeManager,
+    subscriptions: Arc<RwLock<SubscriptionCache>>,
 }
 
 pub async fn start_webserver(state: SharedState) {
@@ -19,34 +20,41 @@ pub async fn start_webserver(state: SharedState) {
     let app = Router::new()
         .route("/config", get(get_config))
         .route("/nodes", get(get_nodes))
+        .route("/nodes", post(post_nodes))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
-#[axum::debug_handler]
-async fn get_config(
-    State(state): State<Arc<SharedState>>,
-) -> Json<NodeConfig> {
+// #[axum::debug_handler]
+async fn get_config(State(state): State<Arc<SharedState>>) -> Json<NodeConfig> {
     Json(state.config.nodes.clone())
 }
 
 #[derive(Debug, Serialize)]
-struct GetNodeEntry {
+struct GetNodeResponse {
     node_id: String,
-    value: UaValue,
+    value: Option<UaValue>,
 }
 
-#[axum::debug_handler]
+// #[axum::debug_handler]
 async fn get_nodes(
     State(state): State<Arc<SharedState>>,
     Json(node_ids): Json<Vec<String>>,
-) -> Json<Vec<GetNodeEntry>> {
+) -> Json<Vec<GetNodeResponse>> {
     let space = state.node_manager.address_space().read();
-    let resp = Vec::new();
-    for node_id in node_ids {
-        let Some(node) = space.find_node(NodeId::from(node_id)) else {
+    let mut resp = Vec::new();
+    for node_id_str in node_ids {
+        let Ok(node_id) = NodeId::from_str(&node_id_str) else {
+            continue;
+        };
+
+        let Ok(node_id) = node_id.as_variable_id() else {
+            continue;
+        };
+
+        let Some(node) = space.find_node(node_id) else {
             continue;
         };
 
@@ -61,11 +69,32 @@ async fn get_nodes(
             f64::MAX,
         );
 
-        resp.push(GetNodeEntry{
-            node_id: node_id,
-            value: UaValue::String("".into())
+        resp.push(GetNodeResponse {
+            node_id: node_id_str,
+            value: value.value.map(UaValue::from),
         });
-
     }
     return Json(resp);
+}
+
+#[derive(Debug, Deserialize)]
+struct PostNodesRequest {
+    node_id: String,
+    value: Option<UaValue>,
+}
+
+#[axum::debug_handler]
+async fn post_nodes(
+    State(state): State<Arc<SharedState>>,
+    Json(node_values): Json<Vec<PostNodesRequest>>,
+) -> Result<()> {
+    let mut values: Vec<(&NodeId, Option<&NumericRange>, DataValue)> = Vec::with_capacity(node_values.len());
+    for entry in node_values {
+        let node_id = NodeId::from_str(&entry.node_id)?;
+        let value = DataValue::new_now(entry.value);
+        values.push((&node_id, None, value));
+    }
+    let subscriptions = state.subscriptions.read().await;
+    state.node_manager.set_values(&subscriptions, values.into_iter());
+    Ok(())
 }

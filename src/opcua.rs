@@ -6,7 +6,7 @@ use opcua_server::node_manager::memory::{
     InMemoryNodeManager, SimpleNodeManager, SimpleNodeManagerImpl, simple_node_manager,
 };
 use opcua_server::ServerBuilder;
-use opcua_types::{Identifier, NodeId, Variant};
+use opcua_types::{NodeId, Variant};
 use serde::{Deserialize, Serialize};
 
 pub type NodeManager = Arc<InMemoryNodeManager<SimpleNodeManagerImpl>>;
@@ -51,7 +51,7 @@ pub async fn start_opcua_server(opcua_config_path: String, node_config_path: Str
         NodeConfig::Variable{
             node_id: "test".into(),
             node_name: "testing".into(),
-            init_value: Variant::String("".into()),
+            init_value: UaValue::String("".into()),
         },
     ];
 
@@ -81,6 +81,50 @@ pub async fn start_opcua_server(opcua_config_path: String, node_config_path: Str
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum UaValue {
     String(String),
+    Boolean(bool),
+    Int16(i16),
+    Int32(i32),
+    Int64(i64),
+    UInt16(u16),
+    UInt32(u32),
+    UInt64(u64),
+    Float(f32),
+    Double(f64),
+}
+
+impl Into<Variant> for UaValue {
+    fn into(self) -> Variant {
+        match self {
+            UaValue::String(v) => Variant::String(v.into()),
+            UaValue::Boolean(v) => Variant::Boolean(v),
+            UaValue::Int16(v) => Variant::Int16(v),
+            UaValue::Int32(v) => Variant::Int32(v),
+            UaValue::Int64(v) => Variant::Int64(v),
+            UaValue::UInt16(v) => Variant::UInt16(v),
+            UaValue::UInt32(v) => Variant::UInt32(v),
+            UaValue::UInt64(v) => Variant::UInt64(v),
+            UaValue::Float(v) => Variant::Float(v),
+            UaValue::Double(v) => Variant::Double(v),
+        }
+    }
+}
+
+impl From<Variant> for UaValue {
+    fn from(value: Variant) -> Self {
+        match value {
+            Variant::String(v) => UaValue::String(v.into()),
+            Variant::Boolean(v) => UaValue::Boolean(v),
+            Variant::Int16(v) => UaValue::Int16(v),
+            Variant::Int32(v) => UaValue::Int32(v),
+            Variant::Int64(v) => UaValue::Int64(v),
+            Variant::UInt16(v) => UaValue::UInt16(v),
+            Variant::UInt32(v) => UaValue::UInt32(v),
+            Variant::UInt64(v) => UaValue::UInt64(v),
+            Variant::Float(v) => UaValue::Float(v),
+            Variant::Double(v) => UaValue::Double(v),
+            _ => unimplemented!(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

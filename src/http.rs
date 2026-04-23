@@ -1,12 +1,13 @@
 use std::{str::FromStr, sync::Arc};
 
 use crate::opcua::{Config, NodeConfig, NodeManager, UaValue};
-use axum::{Json, Router, extract::State, routing::{get, post}};
+use axum::{
+    Json, Router, extract::State, http::StatusCode, response::{IntoResponse, Response}, routing::{get, post}
+};
 use opcua_server::{SubscriptionCache, address_space::NodeType};
 use opcua_types::{DataEncoding, DataValue, NodeId, NumericRange, TimestampsToReturn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use anyhow::Result;
 
 #[derive(Clone)]
 pub struct SharedState {
@@ -28,8 +29,8 @@ pub async fn start_webserver(state: SharedState) {
 }
 
 // #[axum::debug_handler]
-async fn get_config(State(state): State<Arc<SharedState>>) -> Json<NodeConfig> {
-    Json(state.config.nodes.clone())
+async fn get_config(State(state): State<Arc<SharedState>>) -> Result<Json<NodeConfig>, HttpError> {
+    Ok(Json(state.config.nodes.clone()))
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +43,7 @@ struct GetNodeResponse {
 async fn get_nodes(
     State(state): State<Arc<SharedState>>,
     Json(node_ids): Json<Vec<String>>,
-) -> Json<Vec<GetNodeResponse>> {
+) -> Result<Json<Vec<GetNodeResponse>>, HttpError> {
     let space = state.node_manager.address_space().read();
     let mut resp = Vec::new();
     for node_id_str in node_ids {
@@ -74,7 +75,7 @@ async fn get_nodes(
             value: value.value.map(UaValue::from),
         });
     }
-    return Json(resp);
+    return Ok(Json(resp));
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,14 +88,34 @@ struct PostNodesRequest {
 async fn post_nodes(
     State(state): State<Arc<SharedState>>,
     Json(node_values): Json<Vec<PostNodesRequest>>,
-) -> Result<()> {
-    let mut values: Vec<(&NodeId, Option<&NumericRange>, DataValue)> = Vec::with_capacity(node_values.len());
+) -> Result<(), HttpError> {
+    let mut values: Vec<(&NodeId, Option<&NumericRange>, DataValue)> =
+        Vec::with_capacity(node_values.len());
     for entry in node_values {
         let node_id = NodeId::from_str(&entry.node_id)?;
         let value = DataValue::new_now(entry.value);
         values.push((&node_id, None, value));
     }
     let subscriptions = state.subscriptions.read().await;
-    state.node_manager.set_values(&subscriptions, values.into_iter());
+    state
+        .node_manager
+        .set_values(&subscriptions, values.into_iter());
     Ok(())
+}
+
+struct HttpError(anyhow::Error);
+
+impl IntoResponse for HttpError {
+    fn into_response(self) -> Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", self.0)).into_response()
+    }
+}
+
+impl<E> From<E> for HttpError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
 }

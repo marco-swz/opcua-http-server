@@ -147,7 +147,6 @@ pub enum NodeConfig {
     }
 }
 
-/// Creates some sample variables, and some push / pull examples that update them
 fn build_nodes(
     ns: u16,
     node_manager: &mut NodeManager,

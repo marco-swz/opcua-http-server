@@ -9,9 +9,9 @@ use opcua_server::ServerBuilder;
 use opcua_types::{NodeId, Variant};
 use serde::{Deserialize, Serialize};
 
-pub type NodeManager = Arc<InMemoryNodeManager<SimpleNodeManagerImpl>>;
+pub type SimpleNodeManager = Arc<InMemoryNodeManager<SimpleNodeManagerImpl>>;
 
-pub async fn start_opcua_server(opcua_config_path: String, node_config_path: String) -> (u16, NodeManager) {
+pub async fn start_opcua_server(opcua_config_path: String, node_config_path: String) -> (u16, SimpleNodeManager) {
     // Create an OPC UA server with sample configuration and default node set
 
     let (server, handle) = ServerBuilder::new()
@@ -149,7 +149,7 @@ pub enum NodeConfig {
 
 fn build_nodes(
     ns: u16,
-    node_manager: &mut NodeManager,
+    node_manager: &mut SimpleNodeManager,
     node_config: &Vec<NodeConfig>,
     parent_node_id: &NodeId,
 ) {

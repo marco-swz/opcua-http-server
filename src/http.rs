@@ -1,10 +1,10 @@
 use std::{str::FromStr, sync::Arc};
 
-use crate::opcua::{Config, NodeConfig, NodeManager, UaValue};
+use crate::opcua::{Config, NodeConfig, SimpleNodeManager, UaValue};
 use axum::{
-    Json, Router, extract::State, http::StatusCode, response::{IntoResponse, Response}, routing::{get, post}
+    Json, Router, extract::State, http::StatusCode, response::{IntoResponse, Response}, routing::{get, post, patch, delete}
 };
-use opcua_server::{SubscriptionCache, address_space::NodeType};
+use opcua_server::{SubscriptionCache, address_space::NodeType, node_manager::NodeManager};
 use opcua_types::{DataEncoding, DataValue, NodeId, NumericRange, TimestampsToReturn};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -12,16 +12,18 @@ use tokio::sync::RwLock;
 #[derive(Clone)]
 pub struct SharedState {
     config: Config,
-    node_manager: NodeManager,
+    node_manager: SimpleNodeManager,
     subscriptions: Arc<RwLock<SubscriptionCache>>,
 }
 
 pub async fn start_webserver(state: SharedState) {
     let state = Arc::new(state);
     let app = Router::new()
-        .route("/config", get(get_config))
-        .route("/nodes", get(get_nodes))
-        .route("/nodes", post(post_nodes))
+        .route("/config", get(handle_get_config))
+        .route("/nodes", get(handle_get_nodes))
+        .route("/nodes", patch(handle_patch_nodes))
+        .route("/nodes", post(handle_post_nodes))
+        .route("/nodes", delete(handle_delete_nodes))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -29,7 +31,7 @@ pub async fn start_webserver(state: SharedState) {
 }
 
 // #[axum::debug_handler]
-async fn get_config(State(state): State<Arc<SharedState>>) -> Result<Json<NodeConfig>, HttpError> {
+async fn handle_get_config(State(state): State<Arc<SharedState>>) -> Result<Json<NodeConfig>, HttpError> {
     Ok(Json(state.config.nodes.clone()))
 }
 
@@ -40,7 +42,7 @@ struct GetNodeResponse {
 }
 
 // #[axum::debug_handler]
-async fn get_nodes(
+async fn handle_get_nodes(
     State(state): State<Arc<SharedState>>,
     Json(node_ids): Json<Vec<String>>,
 ) -> Result<Json<Vec<GetNodeResponse>>, HttpError> {
@@ -79,28 +81,55 @@ async fn get_nodes(
 }
 
 #[derive(Debug, Deserialize)]
-struct PostNodesRequest {
+struct PatchNodesRequest {
     node_id: String,
     value: Option<UaValue>,
 }
 
 #[axum::debug_handler]
-async fn post_nodes(
+async fn handle_patch_nodes(
     State(state): State<Arc<SharedState>>,
-    Json(node_values): Json<Vec<PostNodesRequest>>,
+    Json(node_values): Json<Vec<PatchNodesRequest>>,
 ) -> Result<(), HttpError> {
-    let mut values: Vec<(&NodeId, Option<&NumericRange>, DataValue)> =
+    let mut values: Vec<(NodeId, Option<NumericRange>, DataValue)> =
         Vec::with_capacity(node_values.len());
     for entry in node_values {
         let node_id = NodeId::from_str(&entry.node_id)?;
         let value = DataValue::new_now(entry.value);
-        values.push((&node_id, None, value));
+        values.push((node_id, None, value));
     }
+    let refs = values.iter().map(|v| (&v.0, None, v.2.clone()));
     let subscriptions = state.subscriptions.read().await;
     state
         .node_manager
-        .set_values(&subscriptions, values.into_iter());
+        .set_values(&subscriptions, refs)?;
     Ok(())
+}
+
+#[axum::debug_handler]
+async fn handle_delete_nodes(
+    State(state): State<Arc<SharedState>>,
+    Json(node_ids): Json<Vec<String>>,
+) -> Result<(), HttpError> {
+    let mut space = state.node_manager.address_space().write();
+    for node_id_str in node_ids {
+        let Ok(node_id) = NodeId::from_str(&node_id_str) else {
+            continue;
+        };
+
+        space.delete(&node_id, true);
+    }
+    return Ok(());
+}
+
+
+#[axum::debug_handler]
+async fn handle_post_nodes(
+    State(state): State<Arc<SharedState>>,
+    Json(node_ids): Json<Vec<NodeConfig>>,
+) -> Result<(), HttpError> {
+    state.node_manager.add_nodes();
+    return Ok(());
 }
 
 struct HttpError(anyhow::Error);
